@@ -1,5 +1,5 @@
 #define MyAppName "FiveM Resource Studio"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "FiveM Resource Studio"
 #define MyAppExeName "FiveM_Resource_Studio.exe"
 

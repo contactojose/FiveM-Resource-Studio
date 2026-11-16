@@ -1,4 +1,4 @@
-import os, re, zipfile, shutil, threading, csv, tkinter as tk
+import os, re, zipfile, shutil, threading, csv, tkinter as tk, json, hashlib, fnmatch
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 
@@ -9,7 +9,7 @@ MAP_EXT = {".ymap", ".ytyp", ".ymf", ".ybn", ".ydr", ".ydd", ".ytd", ".yft"}
 class Studio(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(APP + " V0.1.0 Beta")
+        self.title(APP + " V0.2.0 Beta")
         self.geometry("1120x720")
         self.minsize(900, 600)
         self.configure(bg="#101522")
@@ -44,7 +44,7 @@ class Studio(tk.Tk):
         header.pack(fill="x")
         tk.Label(header, text="FIVEM RESOURCE STUDIO · BETA", bg="#111b2b", fg="white",
                  font=("Segoe UI", 18, "bold")).pack(anchor="w", padx=22, pady=(13,0))
-        tk.Label(header, text="V0.1.0 Beta · Análisis de recursos · Diagnóstico Lua · Permisos ACE opcionales · Editor", bg="#111b2b",
+        tk.Label(header, text="V0.2.0 Beta · Análisis inteligente de archivos · Diagnóstico Lua · Permisos ACE opcionales · Editor", bg="#111b2b",
                  fg="#91a5bf", font=("Segoe UI", 9)).pack(anchor="w", padx=23)
         actions = tk.Frame(self, bg="#101522")
         actions.pack(fill="x", padx=18, pady=12)
@@ -137,8 +137,12 @@ class Studio(tk.Tk):
         recovery_frame.pack(fill="both",expand=True,padx=12,pady=12)
         tk.Label(recovery_frame,text="CENTRO DE RECUPERACIÓN Y CONSERVACIÓN",
                  bg="#101522",fg="white",font=("Segoe UI",12,"bold")).pack(anchor="w")
-        tk.Label(recovery_frame,text="Analiza el ZIP, identifica FXAP, conserva todos los archivos y genera un informe.",
-                 bg="#101522",fg="#91a5bf").pack(anchor="w",pady=(3,10))
+        tk.Label(recovery_frame,text="Analiza cada archivo, detecta indicadores de protección, revisa exclusiones del manifiesto y prepara un informe verificable.",
+                 bg="#101522",fg="#91a5bf",wraplength=980,justify="left").pack(anchor="w",pady=(3,8))
+        self.recovery_stage=tk.StringVar(value="En espera de un recurso")
+        tk.Label(recovery_frame,textvariable=self.recovery_stage,bg="#101522",fg="#93c5fd",font=("Segoe UI",10,"bold")).pack(anchor="w")
+        self.recovery_progress=ttk.Progressbar(recovery_frame,mode="determinate",maximum=100)
+        self.recovery_progress.pack(fill="x",pady=(5,10))
         rec_actions=tk.Frame(recovery_frame,bg="#101522")
         rec_actions.pack(fill="x",pady=(0,8))
         ttk.Button(rec_actions,text="Analizar recurso",command=self.recovery_analyze).pack(side="left",padx=(0,6))
@@ -578,74 +582,119 @@ class Studio(tk.Tk):
         except Exception as e:messagebox.showerror("Error",str(e))
 
     def recovery_analyze(self):
+        """Inspección estática y no destructiva. No descifra ni modifica contenido protegido."""
         if not self.zip_path and not self.workdir:
-            messagebox.showinfo("Recuperación","Carga un ZIP o abre una carpeta primero.")
+            messagebox.showinfo("Análisis", "Carga un ZIP o abre una carpeta primero.")
             return
+        source = self.zip_path if self.zip_path else self.workdir
         records=[]
-        totals={"files":0,"bytes":0,"fxap":0,"lua":0,"map_stream":0,"text":0,"other":0,"unsafe":0}
-        source=self.zip_path if self.zip_path else self.workdir
-        def classify(name, raw_head=b""):
-            ext=Path(name).suffix.lower()
-            if raw_head[:4]==b"FXAP":
-                return "PROTEGIDO_FXAP"
-            if ext==".lua": return "LUA_ACCESIBLE_POR_FIRMA"
-            if ext in MAP_EXT: return "MAPA_STREAM_BINARIO"
-            if ext in TEXT_EXT: return "TEXTO_CONFIGURACION"
-            return "OTRO_ARCHIVO"
+        summary={"files":0,"bytes":0,"fxap_markers":0,"lua":0,"binary_assets":0,
+                 "text":0,"other":0,"unsafe":0,"manifest_ignore_patterns":0}
+        manifest_text=[]
+        self.recovery_progress["value"]=0
+        self.recovery_stage.set("1/4 · Preparando inventario de archivos...")
+        self.update_idletasks()
         try:
             if self.zip_path:
                 with zipfile.ZipFile(self.zip_path) as z:
-                    for info in z.infolist():
-                        if info.is_dir(): continue
+                    infos=[i for i in z.infolist() if not i.is_dir()]
+                    total=max(len(infos),1)
+                    for idx,info in enumerate(infos,1):
                         name=info.filename.replace("\\","/")
                         parts=Path(name).parts
                         unsafe=(name.startswith("/") or name.startswith("\\\\") or ".." in parts or (parts and ":" in parts[0]))
                         if unsafe:
-                            totals["unsafe"]+=1
-                            records.append({"path":info.filename,"size":info.file_size,"status":"RUTA_INSEGURA","sha256":None})
+                            summary["unsafe"]+=1
+                            records.append({"path":name,"size":info.file_size,"status":"RUTA_INSEGURA","detail":"No se inspeccionó por seguridad.","sha256":None})
                             continue
                         with z.open(info) as f:
-                            head=f.read(4)
-                        status=classify(name,head)
-                        totals["files"]+=1; totals["bytes"]+=info.file_size
-                        if status=="PROTEGIDO_FXAP": totals["fxap"]+=1
-                        elif status.startswith("LUA"): totals["lua"]+=1
-                        elif status=="MAPA_STREAM_BINARIO": totals["map_stream"]+=1
-                        elif status=="TEXTO_CONFIGURACION": totals["text"]+=1
-                        else: totals["other"]+=1
-                        records.append({"path":name,"size":info.file_size,"status":status,"sha256":None})
+                            head=f.read(16)
+                            if Path(name).name.lower()=="fxmanifest.lua" or Path(name).name.lower()=="__resource.lua":
+                                raw=head+f.read()
+                                manifest_text.append((name,raw.decode("utf-8","replace")))
+                        ext=Path(name).suffix.lower()
+                        is_fxap=(head[:4]==b"FXAP" or ext==".fxap")
+                        if is_fxap:
+                            status="INDICADOR_FXAP"
+                            detail="Marcador/archivo FXAP detectado; no se ha determinado ni recuperado el contenido cifrado."
+                            summary["fxap_markers"]+=1
+                        elif ext==".lua":
+                            status="LUA_POR_INSPECCIONAR"
+                            detail="Archivo Lua localizado. La extensión por sí sola no determina si está protegido u ofuscado."
+                            summary["lua"]+=1
+                        elif ext in MAP_EXT:
+                            status="ASSET_BINARIO"
+                            detail="Formato de asset identificado; la extensión no demuestra por sí sola protección."
+                            summary["binary_assets"]+=1
+                        elif ext in TEXT_EXT:
+                            status="TEXTO_INSPECCIONABLE"
+                            detail="Archivo de texto; se puede inspeccionar si su contenido es legible."
+                            summary["text"]+=1
+                        else:
+                            status="FORMATO_NO_CLASIFICADO"
+                            detail="Formato inventariado; requiere un analizador específico para identificar su contenido."
+                            summary["other"]+=1
+                        summary["files"]+=1; summary["bytes"]+=info.file_size
+                        records.append({"path":name,"size":info.file_size,"status":status,"detail":detail,"sha256":None})
+                        if idx % 20 == 0 or idx==total:
+                            self.recovery_progress["value"]=min(65, int(idx/total*65))
+                            self.recovery_stage.set(f"2/4 · Analizando archivos: {idx}/{total}")
+                            self.update_idletasks()
             else:
+                all_files=[]
                 for root,dirs,files in os.walk(self.workdir):
-                    for fn in files:
-                        full=os.path.join(root,fn); rel=os.path.relpath(full,self.workdir).replace("\\","/")
-                        with open(full,"rb") as f: head=f.read(4)
-                        size=os.path.getsize(full); status=classify(rel,head)
-                        totals["files"]+=1; totals["bytes"]+=size
-                        if status=="PROTEGIDO_FXAP": totals["fxap"]+=1
-                        elif status.startswith("LUA"): totals["lua"]+=1
-                        elif status=="MAPA_STREAM_BINARIO": totals["map_stream"]+=1
-                        elif status=="TEXTO_CONFIGURACION": totals["text"]+=1
-                        else: totals["other"]+=1
-                        records.append({"path":rel,"size":size,"status":status,"sha256":None})
-            self.recovery_report_data={"source":source,"summary":totals,"files":records,
-                 "notice":"La firma FXAP identifica archivos protegidos; este informe no los desencripta. Los archivos se conservan sin modificar. El archivo FXAP solo debe retirarse de un paquete de trabajo después de una recuperación oficial/autorizada verificada y con copia de seguridad."}
-            self.recovery_text.delete("1.0","end")
-            self.recovery_text.insert("end","INFORME DE RECUPERACIÓN\\n")
-            self.recovery_text.insert("end",f"Origen: {source}\\n\\n")
-            self.recovery_text.insert("end",f"Archivos analizados: {totals['files']}\\n")
-            self.recovery_text.insert("end",f"Tamaño total: {self.fmt_size(totals['bytes'])}\\n")
-            self.recovery_text.insert("end",f"FXAP detectados: {totals['fxap']}\\n")
-            self.recovery_text.insert("end",f"Lua no identificados como FXAP: {totals['lua']}\\n")
-            self.recovery_text.insert("end",f"Mapas/STREAM binarios: {totals['map_stream']}\\n")
-            self.recovery_text.insert("end",f"Texto/configuración: {totals['text']}\\n")
-            self.recovery_text.insert("end",f"Otros archivos: {totals['other']}\\n")
-            self.recovery_text.insert("end",f"Rutas inseguras: {totals['unsafe']}\\n\\nDETALLE DE ARCHIVOS\\n")
+                    dirs[:]=[d for d in dirs if d not in (".git","__pycache__")]
+                    for fn in files: all_files.append(os.path.join(root,fn))
+                total=max(len(all_files),1)
+                for idx,full in enumerate(all_files,1):
+                    name=os.path.relpath(full,self.workdir).replace("\\","/")
+                    with open(full,"rb") as f:
+                        head=f.read(16)
+                        if Path(name).name.lower() in ("fxmanifest.lua","__resource.lua"):
+                            manifest_text.append((name,(head+f.read()).decode("utf-8","replace")))
+                    ext=Path(name).suffix.lower(); size=os.path.getsize(full)
+                    is_fxap=(head[:4]==b"FXAP" or ext==".fxap")
+                    if is_fxap: status="INDICADOR_FXAP"; detail="Marcador/archivo FXAP detectado; no se ha recuperado contenido."; summary["fxap_markers"]+=1
+                    elif ext==".lua": status="LUA_POR_INSPECCIONAR"; detail="La extensión no determina por sí sola protección u ofuscación."; summary["lua"]+=1
+                    elif ext in MAP_EXT: status="ASSET_BINARIO"; detail="Formato de asset identificado; protección no confirmada por extensión."; summary["binary_assets"]+=1
+                    elif ext in TEXT_EXT: status="TEXTO_INSPECCIONABLE"; detail="Archivo de texto potencialmente inspeccionable."; summary["text"]+=1
+                    else: status="FORMATO_NO_CLASIFICADO"; detail="Requiere analizador específico."; summary["other"]+=1
+                    summary["files"]+=1; summary["bytes"]+=size
+                    records.append({"path":name,"size":size,"status":status,"detail":detail,"sha256":None})
+                    if idx % 20 == 0 or idx==total:
+                        self.recovery_progress["value"]=min(65,int(idx/total*65)); self.recovery_stage.set(f"2/4 · Analizando archivos: {idx}/{total}"); self.update_idletasks()
+            self.recovery_stage.set("3/4 · Revisando exclusiones declaradas en manifiestos...")
+            self.recovery_progress["value"]=78; self.update_idletasks()
+            ignore=[]
+            for mpath,txt in manifest_text:
+                for match in re.finditer(r"escrow_ignore\s*\{([^}]*)\}",txt,re.I|re.S):
+                    body=match.group(1)
+                    ignore.extend(re.findall(r"['\"]([^'\"]+)['\"]",body))
+            summary["manifest_ignore_patterns"]=len(ignore)
             for r in records:
-                self.recovery_text.insert("end",f"[{r['status']}] {r['path']} ({self.fmt_size(r['size'])})\\n")
-            self.recovery_text.insert("end","\\nNOTA: Lua no marcado FXAP no significa que esté desofuscado ni que necesariamente sea fuente legible. Los FXAP se conservan intactos; para acceder a su contenido se requiere el mecanismo autorizado del proveedor/creador.\\n")
-            self.tabs.select(self.tab_recovery)
-            self.status.set("Análisis de recuperación terminado.")
+                if any(fnmatch.fnmatch(r["path"],pat) or fnmatch.fnmatch(Path(r["path"]).name,pat) for pat in ignore):
+                    r["manifest_note"]="Coincide con un patrón escrow_ignore declarado; comprobar el patrón y la ruta en el manifiesto."
+            self.recovery_stage.set("4/4 · Preparando informe y verificando inventario...")
+            self.recovery_progress["value"]=94; self.update_idletasks()
+            self.recovery_report_data={"source":source,"summary":summary,"escrow_ignore_patterns":ignore,"files":records,
+                "scope":"Inspección estática no destructiva. No descifra, no elimina FXAP y no confirma criptográficamente protección por extensión.",
+                "next_step":"Para recuperar contenido protegido se necesita una exportación/fuente de recuperación autorizada del creador o proveedor. Este informe identifica candidatos y conserva los originales."}
+            self.recovery_text.delete("1.0","end")
+            self.recovery_text.insert("end","INFORME DE ANÁLISIS INTELIGENTE\n")
+            self.recovery_text.insert("end",f"Origen: {source}\nArchivos: {summary['files']} · Tamaño: {self.fmt_size(summary['bytes'])}\n")
+            self.recovery_text.insert("end",f"Indicadores FXAP: {summary['fxap_markers']}\nArchivos Lua: {summary['lua']}\nAssets binarios: {summary['binary_assets']}\nTexto: {summary['text']}\nOtros: {summary['other']}\nRutas inseguras: {summary['unsafe']}\nPatrones escrow_ignore: {len(ignore)}\n")
+            if ignore:
+                self.recovery_text.insert("end","\nPATRONES escrow_ignore DECLARADOS\n")
+                for pat in ignore: self.recovery_text.insert("end",f"  • {pat}\n")
+            self.recovery_text.insert("end","\nDETALLE DE ARCHIVOS\n")
+            for r in records:
+                self.recovery_text.insert("end",f"[{r['status']}] {r['path']} ({self.fmt_size(r['size'])})\n  {r['detail']}\n")
+                if r.get("manifest_note"): self.recovery_text.insert("end",f"  {r['manifest_note']}\n")
+            self.recovery_text.insert("end","\nIMPORTANTE: detectar FXAP o una extensión compatible no revela por sí solo qué contenido está cifrado. Los archivos originales no se modificaron. La aplicación no elimina marcadores ni simula una recuperación.\n")
+            self.recovery_progress["value"]=100; self.recovery_stage.set("Análisis terminado · No se modificó ningún archivo")
+            self.tabs.select(self.tab_recovery); self.status.set("Análisis inteligente terminado.")
         except Exception as e:
+            self.recovery_stage.set("El análisis encontró un error")
             messagebox.showerror("Error de análisis",str(e))
 
     def export_recovery_report(self):
