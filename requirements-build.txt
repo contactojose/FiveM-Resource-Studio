@@ -1,0 +1,3 @@
+# Runtime uses Python standard library + Tkinter.
+# Build dependency only:
+pyinstaller>=6.10,<7

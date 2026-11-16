@@ -1,0 +1,36 @@
+FIVEM RESOURCE STUDIO — PAQUETE DE COMPILACIÓN BETA 0.1.0
+
+OBJETIVO
+Generar instaladores independientes. La persona que instale la versión final NO necesita tener Python instalado.
+
+ESTADO DE ESTA ENTREGA
+Este ZIP contiene el código fuente y el flujo automatizado de compilación. NO contiene todavía el instalador .EXE compilado. La compilación debe ejecutarse en un entorno Windows real; los paquetes macOS se generan en equipos macOS.
+
+CÓMO OBTENER EL INSTALADOR DE WINDOWS
+1. Sube el contenido de esta carpeta a un repositorio GitHub propio.
+2. En GitHub, abre la pestaña Actions.
+3. Selecciona “Construir instaladores FiveM Resource Studio”.
+4. Pulsa “Run workflow” y espera a que finalice correctamente el trabajo Windows 10/11 x64.
+5. Descarga el artefacto “FiveM-Resource-Studio-Setup-Windows-x64”.
+6. Dentro encontrarás FiveM_Resource_Studio_Setup_Windows_x64.exe.
+
+El usuario final solo ejecuta ese instalador. No necesita instalar Python ni PyInstaller.
+
+FUNCIONES PRESENTES EN ESTA BETA
+- Abrir carpetas y ZIP de recursos.
+- Inspeccionar archivos y contenido accesible.
+- Diagnóstico estático preliminar de Lua.
+- Editor de archivos de texto/Lua.
+- Inspección de XML y exportación de coordenadas/entidades cuando el formato es compatible.
+- Análisis y conservación de archivos protegidos FXAP, sin descifrarlos ni eludir CFX Asset Escrow.
+- Editor opcional de permisos ACE; no aplica cambios automáticamente a server.cfg.
+
+LIMITACIONES IMPORTANTES
+- Esta beta no descifra ni elimina protecciones CFX Asset Escrow.
+- No edita directamente mapas binarios YMAP/YTYP.
+- Los diagnósticos estáticos no garantizan que un recurso funcione sin errores en FiveM; se requiere prueba en servidor de desarrollo.
+- Los paquetes macOS generados por CI no están firmados ni notarizados en esta etapa; macOS puede mostrar advertencias de seguridad.
+- La aplicación es gratuita en esta etapa y no contiene activación, licencia de pago ni bloqueo artificial.
+
+PRUEBAS RECOMENDADAS
+Usa primero copias de recursos, nunca el único original. Comprueba apertura, análisis, exportación y guardado en un servidor de pruebas.
