@@ -4,16 +4,18 @@ name: Build FiveM Resource Studio
 on:
   workflow_dispatch:
   push:
-    branches: [principal]
+    branches:
+      - main
 
 jobs:
   windows:
     runs-on: windows-latest
+
     steps:
       - name: Descargar proyecto
         uses: actions/checkout@v4
 
-      - name: Configurar Python para compilación
+      - name: Configurar Python de compilacion
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -23,17 +25,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-build.txt
 
-      - name: Crear ejecutable
+      - name: Generar ejecutable independiente
         run: |
-          pyinstaller --noconfirm --clean --windowed --name FiveM_Resource_Studio FiveM_Resource_Studio.py
+          pyinstaller --noconfirm --clean --onefile --windowed --name FiveM_Resource_Studio FiveM_Resource_Studio.py
 
-      - name: Compilar instalador
+      - name: Instalar Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Crear instalador
         run: |
-          choco install innosetup --no-progress -y
+          New-Item -ItemType Directory -Force -Path installer
           iscc FiveM_Resource_Studio_Setup.iss
 
-      - name: Publicar instalador
+      - name: Guardar instalador
         uses: actions/upload-artifact@v4
         with:
-          name: FiveM-Resource-Studio-Windows-Installer
+          name: FiveM-Resource-Studio-Windows-Beta
           path: installer/FiveM_Resource_Studio_Setup_Windows_x64.exe
+          if-no-files-found: error
